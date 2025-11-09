@@ -1,0 +1,57 @@
+# Rust
+data-plane/target/
+data-plane/**/*.rs.bk
+data-plane/Cargo.lock
+
+# Go
+control-plane/bin/
+control-plane/vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# React / Node
+portal/node_modules/
+portal/dist/
+portal/.env.local
+portal/.env.production.local
+portal/.vite/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+
+# Docker
+.docker/
+
+# OS
+Thumbs.db
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
