@@ -1,0 +1,681 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Complete data plane foundation with database and Redis connections",
+        "description": "Implement application state initialization with PostgreSQL and Redis connections, configuration management, and shared data models",
+        "details": "Create AppState struct in main.rs that holds database pools, Redis client, and configuration. Implement config.rs to load environment variables for DATABASE_URL, REDIS_URL, ports, and timeouts. Create models module with Route, Service, Plugin structs that match the database schema. Add connection pooling for both PostgreSQL (using sqlx) and Redis. Include graceful error handling and connection retry logic.",
+        "testStrategy": "Unit tests for configuration loading with various environment setups. Integration tests for database and Redis connectivity. Connection pool performance tests to ensure no connection leaks under load.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Setup PostgreSQL database connection pool with SQLx",
+            "description": "Initialize SQLx connection pool for PostgreSQL with proper configuration and error handling",
+            "dependencies": [],
+            "details": "Create database connection pool using sqlx::PgPool with connection configuration from DATABASE_URL environment variable. Implement connection validation, pool size limits, and connection timeout settings. Add proper error handling for connection failures and include database health check functionality.",
+            "status": "pending",
+            "testStrategy": "Unit tests for connection pool initialization with valid/invalid DATABASE_URL. Integration tests for database connectivity and connection pooling under load."
+          },
+          {
+            "id": 2,
+            "title": "Initialize Redis client with connection manager",
+            "description": "Setup Redis client and connection manager for caching and configuration sync",
+            "dependencies": [
+              1
+            ],
+            "details": "Create Redis client using redis-rs with connection manager for connection pooling. Configure Redis connection from REDIS_URL environment variable with reconnection logic and timeout settings. Implement Redis health check and connection validation methods.",
+            "status": "pending",
+            "testStrategy": "Unit tests for Redis client initialization and connection management. Integration tests for Redis connectivity and failover scenarios."
+          },
+          {
+            "id": 3,
+            "title": "Implement configuration management and environment loading",
+            "description": "Create comprehensive configuration system for loading all environment variables and application settings",
+            "dependencies": [],
+            "details": "Enhance config.rs to load DATABASE_URL, REDIS_URL, DATA_PLANE_PORT, timeouts, and all required environment variables. Implement Config struct with validation, default values, and proper error handling. Add configuration validation and environment-specific settings support.",
+            "status": "pending",
+            "testStrategy": "Unit tests for configuration loading with various environment setups and missing variables. Validation tests for required vs optional configuration parameters."
+          },
+          {
+            "id": 4,
+            "title": "Create shared data models matching database schema",
+            "description": "Implement Route, Service, Plugin, and Workspace structs that correspond to the PostgreSQL schema",
+            "dependencies": [],
+            "details": "Create models module with structs for Route, Service, Plugin, and Workspace that match the control plane's Go models. Include proper serialization/deserialization with serde, field validation, and database mapping using sqlx attributes. Ensure workspace-based multi-tenancy support and proper relationships between entities.",
+            "status": "pending",
+            "testStrategy": "Unit tests for model serialization/deserialization and validation. Integration tests ensuring models correctly map to database schema and match Go counterparts."
+          },
+          {
+            "id": 5,
+            "title": "Implement error handling and connection retry logic",
+            "description": "Add comprehensive error handling with retry mechanisms and graceful degradation for database and Redis connections",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Create error handling framework with custom error types for database and Redis failures. Implement exponential backoff retry logic for connection failures, circuit breaker pattern for degraded services, and graceful degradation when external services are unavailable. Add logging and monitoring for connection health.",
+            "status": "pending",
+            "testStrategy": "Unit tests for retry logic with simulated connection failures. Integration tests for graceful degradation scenarios. Load tests ensuring system stability under connection stress."
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Implement route matching engine with trie-based algorithm",
+        "description": "Build high-performance route matching system using trie data structure for O(log n) lookup performance",
+        "details": "Create routing module with RouteMatcher struct that builds trie from route configurations. Support exact paths, wildcards (*), and path parameters (:param). Implement cache layer that loads routes from Redis and falls back to PostgreSQL. Add route configuration sync mechanism to update matcher when routes change. Include priority-based matching for overlapping patterns.",
+        "testStrategy": "Benchmark tests with 1000+ routes to verify O(log n) performance. Unit tests for wildcard and parameter matching. Integration tests with Redis cache updates. Load tests measuring route matching latency under concurrent requests.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Design and implement trie data structure for route storage",
+            "description": "Create the core trie data structure to store route patterns with nodes representing path segments and terminal nodes storing route metadata.",
+            "dependencies": [],
+            "details": "Implement TrieNode struct with HashMap for children and Option<RouteInfo> for terminal nodes. Create RouteInfo struct containing service_id, method, priority, and plugin configurations. Design trie insertion algorithm that splits paths by '/' and creates nodes for each segment. Include path compression optimization for single-child nodes to reduce memory usage.",
+            "status": "pending",
+            "testStrategy": "Unit tests for trie insertion with various path patterns. Memory usage tests comparing trie vs HashMap storage. Path compression verification tests."
+          },
+          {
+            "id": 2,
+            "title": "Implement exact path matching algorithm",
+            "description": "Build the core matching logic for exact path routes without wildcards or parameters, establishing the foundation for the routing engine.",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement traverse method on Trie that walks nodes following exact path segments. Add method validation (GET, POST, etc.) at terminal nodes. Include case-sensitive path matching with proper HTTP method filtering. Return RouteMatch struct containing matched route info and extracted path segments.",
+            "status": "pending",
+            "testStrategy": "Unit tests for exact path matching with different HTTP methods. Edge case tests for empty paths, trailing slashes, and malformed URLs."
+          },
+          {
+            "id": 3,
+            "title": "Add wildcard (*) pattern matching support",
+            "description": "Extend the trie matching algorithm to support wildcard patterns that can match any path segment or multiple segments.",
+            "dependencies": [
+              2
+            ],
+            "details": "Modify TrieNode to support wildcard markers ('*' for single segment, '**' for multiple segments). Update traversal algorithm to explore wildcard branches when exact matches fail. Implement backtracking for multiple wildcard possibilities. Add wildcard capture groups to RouteMatch for downstream processing.",
+            "status": "pending",
+            "testStrategy": "Unit tests for single and multi-segment wildcards. Priority tests ensuring exact matches take precedence over wildcards. Backtracking tests with complex wildcard patterns."
+          },
+          {
+            "id": 4,
+            "title": "Implement path parameter (:param) extraction",
+            "description": "Add support for named path parameters that capture URL segments and make them available to downstream handlers.",
+            "dependencies": [
+              3
+            ],
+            "details": "Extend TrieNode to store parameter names for parameterized segments. Modify traversal to capture parameter values in HashMap<String, String>. Support parameter validation with regex patterns. Include parameter extraction in RouteMatch struct. Handle parameter conflicts with wildcard patterns through priority ordering.",
+            "status": "pending",
+            "testStrategy": "Unit tests for parameter extraction with various path patterns. Validation tests with regex constraints. Conflict resolution tests between parameters and wildcards."
+          },
+          {
+            "id": 5,
+            "title": "Create Redis-backed route cache with fallback to PostgreSQL",
+            "description": "Implement caching layer that loads route configurations from Redis for fast access with PostgreSQL fallback for cache misses.",
+            "dependencies": [
+              4
+            ],
+            "details": "Create RouteCacheManager with Redis client for route storage. Implement cache loading that builds trie from Redis hash maps containing serialized route configurations. Add PostgreSQL fallback using sqlx for database queries. Include cache warming strategy and TTL management. Implement cache invalidation on route updates.",
+            "status": "pending",
+            "testStrategy": "Integration tests with Redis and PostgreSQL. Cache hit/miss scenario tests. Performance tests comparing cached vs database lookup times. Cache invalidation tests."
+          },
+          {
+            "id": 6,
+            "title": "Add route priority handling and configuration sync mechanism",
+            "description": "Implement priority-based route matching for overlapping patterns and synchronization system to update the matcher when routes change.",
+            "dependencies": [
+              5
+            ],
+            "details": "Add priority field to RouteInfo and implement priority-based sorting in trie traversal. Create ConfigSyncManager that listens to Redis pub/sub for route updates. Implement atomic trie rebuilding on configuration changes. Add route conflict detection and resolution. Include metrics for route matching performance and cache hit rates.",
+            "status": "pending",
+            "testStrategy": "Priority resolution tests with overlapping routes. Configuration sync tests with Redis pub/sub. Atomic update tests ensuring no request failures during route reloading. Performance tests measuring sync overhead."
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Develop HTTP proxy client with connection pooling",
+        "description": "Create high-performance HTTP client for forwarding requests to upstream services with connection reuse and timeout handling",
+        "details": "Implement ProxyClient using reqwest with custom connection pooling. Support HTTP/1.1, HTTP/2, and HTTPS protocols. Add configurable timeouts for connect, read, and write operations. Implement request/response streaming for large payloads. Include upstream health tracking and automatic retry logic with exponential backoff.",
+        "testStrategy": "Load tests with 10k concurrent requests to verify connection pooling efficiency. Integration tests with mock upstream servers. Timeout handling tests with slow/unresponsive upstreams. Memory leak tests for connection pool management.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Configure reqwest client with custom connection pooling settings",
+            "description": "Set up reqwest HTTP client with optimized connection pool configuration for high-performance request forwarding",
+            "dependencies": [],
+            "details": "Create ProxyClient struct with reqwest::Client configured for optimal connection pooling. Set max_idle_per_host, pool_idle_timeout, and pool_max_idle_per_host parameters. Configure TCP keepalive settings and connection limits. Add client builder with custom resolver and DNS settings for improved performance.",
+            "status": "pending",
+            "testStrategy": "Unit tests for client configuration validation. Connection pool efficiency tests with concurrent requests. Memory usage tests to ensure proper connection cleanup."
+          },
+          {
+            "id": 2,
+            "title": "Implement HTTP/1.1 and HTTP/2 protocol support with TLS",
+            "description": "Add comprehensive HTTP protocol support including HTTP/1.1, HTTP/2, and secure HTTPS connections with proper TLS handling",
+            "dependencies": [
+              1
+            ],
+            "details": "Configure reqwest client to support both HTTP/1.1 and HTTP/2 protocols. Implement TLS configuration with certificate validation and custom CA support. Add protocol negotiation logic and fallback mechanisms. Include SNI support for multi-domain upstream services.",
+            "status": "pending",
+            "testStrategy": "Protocol compatibility tests with HTTP/1.1 and HTTP/2 endpoints. TLS handshake tests with various certificate configurations. Security tests for certificate validation and protocol downgrade attacks."
+          },
+          {
+            "id": 3,
+            "title": "Add configurable timeout handling for connect, read, and write operations",
+            "description": "Implement comprehensive timeout configuration system for all aspects of HTTP client operations",
+            "dependencies": [
+              1
+            ],
+            "details": "Add timeout configuration for connection establishment, request sending, and response receiving. Implement per-route timeout overrides and global defaults. Add timeout configuration in AppState and route-specific timeout handling. Include proper error handling and timeout-specific error types.",
+            "status": "pending",
+            "testStrategy": "Timeout behavior tests with slow upstream servers. Configuration validation tests for timeout values. Edge case tests with very short and very long timeouts."
+          },
+          {
+            "id": 4,
+            "title": "Implement request and response streaming for large payloads",
+            "description": "Add streaming support for handling large HTTP request and response bodies without loading entire payloads into memory",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "Implement streaming request forwarding using reqwest's streaming capabilities. Add response body streaming to avoid memory buffering. Configure appropriate buffer sizes and streaming chunk handling. Include backpressure handling and stream error recovery.",
+            "status": "pending",
+            "testStrategy": "Large payload streaming tests with multi-gigabyte requests/responses. Memory usage tests to verify streaming efficiency. Stream interruption and recovery tests."
+          },
+          {
+            "id": 5,
+            "title": "Create upstream health tracking with retry logic and exponential backoff",
+            "description": "Implement health monitoring system for upstream services with intelligent retry mechanisms and failure handling",
+            "dependencies": [
+              4
+            ],
+            "details": "Create HealthTracker component to monitor upstream service availability. Implement retry logic with exponential backoff and jitter. Add circuit breaker pattern integration and failure threshold configuration. Include health status caching and periodic health check mechanisms.",
+            "status": "pending",
+            "testStrategy": "Health tracking tests with simulated upstream failures. Retry logic tests with various failure scenarios. Circuit breaker integration tests and recovery timing validation."
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Implement authentication middleware with JWT and API key validation",
+        "description": "Build authentication system supporting JWT tokens and API key validation with Redis caching",
+        "details": "Create AuthMiddleware that validates JWT tokens using jsonwebtoken crate, supporting RS256 and HS256 algorithms. Implement API key authentication with Redis cache lookup and database fallback. Add support for multiple JWT issuers and key rotation. Include user context extraction and workspace isolation. Support OAuth2 bearer tokens with introspection endpoint validation.",
+        "testStrategy": "Unit tests for JWT validation with valid/invalid/expired tokens. API key authentication tests with cache hit/miss scenarios. Security tests against common JWT vulnerabilities (none algorithm, key confusion). Performance tests for auth middleware latency impact.",
+        "priority": "medium",
+        "dependencies": [
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement JWT validation using jsonwebtoken crate with RS256/HS256 support",
+            "description": "Create JWT validation functionality supporting both RS256 and HS256 algorithms using the jsonwebtoken crate for secure token verification",
+            "dependencies": [],
+            "details": "Implement JWT token validation with jsonwebtoken crate supporting RS256 and HS256 algorithms. Create JwtValidator struct with methods for token parsing, signature verification, and claims extraction. Handle token expiration, issuer validation, and audience checks. Add support for both public key (RS256) and shared secret (HS256) verification. Include proper error handling for malformed, expired, or invalid tokens.",
+            "status": "pending",
+            "testStrategy": "Unit tests with valid/invalid/expired JWT tokens. Test both RS256 and HS256 algorithms. Verify proper error handling for malformed tokens and signature mismatches."
+          },
+          {
+            "id": 2,
+            "title": "Create API key authentication with Redis caching and database fallback",
+            "description": "Build API key authentication system with Redis caching for performance and PostgreSQL database fallback for reliability",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement ApiKeyAuth struct that validates API keys through Redis cache lookup with PostgreSQL fallback. Create cache-aside pattern for API key storage with configurable TTL. Add API key hash validation using secure comparison to prevent timing attacks. Include workspace-scoped API key validation and permissions checking. Implement rate limiting per API key and proper error responses for invalid keys.",
+            "status": "pending",
+            "testStrategy": "Integration tests with Redis cache hit/miss scenarios. Database fallback tests when Redis is unavailable. Security tests against timing attacks and key enumeration."
+          },
+          {
+            "id": 3,
+            "title": "Add multi-issuer JWT support and key rotation handling",
+            "description": "Extend JWT validation to support multiple token issuers and implement key rotation mechanisms for enhanced security",
+            "dependencies": [
+              1
+            ],
+            "details": "Extend JwtValidator to support multiple JWT issuers with different signing keys. Implement JWKS (JSON Web Key Set) endpoint integration for automatic key discovery and rotation. Add issuer-specific configuration management and key caching with refresh mechanisms. Support graceful key rollover during rotation periods and handle key ID (kid) header validation. Include configuration for trusted issuers and key refresh intervals.",
+            "status": "pending",
+            "testStrategy": "Tests with multiple issuers and different signing keys. Key rotation simulation tests. JWKS endpoint integration tests with mock key servers."
+          },
+          {
+            "id": 4,
+            "title": "Implement user context extraction and workspace isolation middleware",
+            "description": "Create middleware for extracting user context from authenticated requests and enforcing workspace-based access isolation",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Implement UserContext extraction from JWT claims and API key metadata. Create workspace isolation middleware that validates user access to specific workspace resources. Add request context enrichment with user ID, workspace ID, and permissions. Implement workspace-scoped resource access validation and proper authorization error responses. Include audit logging for authentication events and access attempts.",
+            "status": "pending",
+            "testStrategy": "Authorization tests verifying workspace isolation. User context extraction tests with various token types. Access control tests ensuring users cannot access other workspaces."
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Build distributed rate limiting with token bucket algorithm",
+        "description": "Implement rate limiting middleware using Redis for distributed state and token bucket algorithm for smooth rate control",
+        "details": "Create RateLimiter middleware using Redis sorted sets or streams for distributed counting. Implement token bucket algorithm with configurable refill rates and burst capacity. Support per-client, per-route, and global rate limits. Add sliding window rate limiting as alternative algorithm. Include rate limit headers (X-RateLimit-*) and proper HTTP 429 responses with Retry-After.",
+        "testStrategy": "Load tests verifying rate limits under concurrent access from multiple data plane instances. Accuracy tests measuring distributed rate limiting precision. Burst handling tests with token bucket behavior. Redis failover tests with local fallback.",
+        "priority": "medium",
+        "dependencies": [
+          1,
+          4
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement token bucket algorithm with configurable refill rates",
+            "description": "Create a token bucket rate limiting algorithm that supports configurable token refill rates and burst capacity for smooth rate control",
+            "dependencies": [],
+            "details": "Implement TokenBucket struct with fields for capacity, current_tokens, refill_rate, and last_refill_time. Create methods for consume_tokens() that checks availability and refills tokens based on elapsed time. Support configurable parameters like max_capacity, refill_rate_per_second, and burst_allowance. Handle edge cases like clock adjustments and ensure thread-safe operations.",
+            "status": "pending",
+            "testStrategy": "Unit tests for token consumption and refill logic with various time intervals. Burst capacity tests ensuring proper token accumulation limits. Concurrent access tests verifying thread safety of token bucket operations."
+          },
+          {
+            "id": 2,
+            "title": "Create Redis-based distributed state management using sorted sets",
+            "description": "Build Redis integration for distributed rate limiting state management across multiple data plane instances using sorted sets for efficient time-based operations",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement DistributedRateLimiter using Redis sorted sets (ZSET) to track request timestamps per client/route. Use Redis scripts (Lua) for atomic operations to check and update rate limit state. Implement sliding window cleanup using ZREMRANGEBYSCORE to remove expired entries. Add Redis connection pooling and fallback mechanisms for Redis unavailability.",
+            "status": "pending",
+            "testStrategy": "Redis integration tests verifying correct ZSET operations and cleanup. Distributed state consistency tests with multiple data plane instances. Redis failover tests ensuring graceful degradation to local-only rate limiting when Redis is unavailable."
+          },
+          {
+            "id": 3,
+            "title": "Add sliding window rate limiting as alternative algorithm",
+            "description": "Implement sliding window rate limiting algorithm as an alternative to token bucket for more precise rate control over time windows",
+            "dependencies": [
+              2
+            ],
+            "details": "Create SlidingWindowRateLimiter that tracks request timestamps in Redis sorted sets with TTL. Implement fixed window and sliding window variants with configurable window sizes (1s, 1m, 1h). Add support for multiple concurrent windows (e.g., 100/minute and 1000/hour). Ensure efficient memory usage by automatically cleaning expired entries.",
+            "status": "pending",
+            "testStrategy": "Sliding window accuracy tests verifying precise rate limiting over various time windows. Memory usage tests ensuring proper cleanup of expired entries. Performance comparison tests between token bucket and sliding window algorithms."
+          },
+          {
+            "id": 4,
+            "title": "Implement per-client, per-route, and global rate limiting scopes",
+            "description": "Build rate limiting middleware that supports different scoping levels including per-client IP, per-route, and global rate limits with hierarchical enforcement",
+            "dependencies": [
+              3
+            ],
+            "details": "Create RateLimiterMiddleware that extracts client identifiers (IP, API key, JWT subject) and applies rate limits at multiple scopes. Implement rate limit configuration in Route and Service models with inheritance rules. Support rate limit hierarchies where multiple limits can apply (e.g., 100/min per-client AND 1000/min per-route). Add rate limit key generation strategies for different identifier types.",
+            "status": "pending",
+            "testStrategy": "Multi-scope rate limiting tests verifying correct enforcement at different levels. Inheritance tests ensuring proper cascade of rate limits from global to route to client. Edge case tests for anonymous clients and missing identifiers."
+          },
+          {
+            "id": 5,
+            "title": "Add proper HTTP 429 responses with rate limit headers and Retry-After",
+            "description": "Implement standard HTTP rate limiting responses including proper status codes, rate limit headers, and retry timing information",
+            "dependencies": [
+              4
+            ],
+            "details": "Create response formatting for HTTP 429 Too Many Requests with standard X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset headers. Add Retry-After header calculation based on token bucket refill time or sliding window reset. Support custom error response formatting and rate limit exceeded messages. Include rate limit status in successful responses for client visibility.",
+            "status": "pending",
+            "testStrategy": "HTTP response format tests ensuring compliance with rate limiting standards. Header accuracy tests verifying correct Retry-After calculations. Client integration tests demonstrating proper rate limit handling and retry behavior."
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Create control plane API with database operations",
+        "description": "Implement complete REST API for route, service, and plugin management with PostgreSQL persistence and Redis sync",
+        "details": "Build handlers for routes, services, plugins, and workspaces CRUD operations. Implement database layer with sqlx for prepared statements and connection pooling. Add input validation using validator crate and Zod-like schemas. Create Redis sync mechanism to publish configuration changes to data plane. Include workspace-based authorization and multi-tenancy support.",
+        "testStrategy": "API integration tests for all CRUD endpoints with valid/invalid input validation. Database transaction tests ensuring data consistency. Redis pub/sub tests verifying configuration sync. Authorization tests ensuring workspace isolation.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement database layer with SQLx for CRUD operations",
+            "description": "Build database access layer using SQLx with prepared statements and connection pooling for routes, services, plugins, and workspaces tables",
+            "dependencies": [],
+            "details": "Create database connection module using SQLx with PostgreSQL driver. Implement CRUD operations for all entities (routes, services, plugins, workspaces) using prepared statements for security and performance. Set up connection pooling with configurable pool size. Add database migration support and error handling. Include transaction support for atomic operations across multiple tables.",
+            "status": "pending",
+            "testStrategy": "Unit tests for each CRUD operation with valid/invalid data. Connection pool tests under load. Transaction rollback tests for error scenarios. Database migration tests."
+          },
+          {
+            "id": 2,
+            "title": "Create REST API handlers with input validation and error handling",
+            "description": "Build Gin HTTP handlers for all CRUD endpoints with comprehensive input validation and structured error responses",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement REST handlers for routes, services, plugins, and workspaces using Gin framework. Add input validation using Go validator package with custom validation rules. Create standardized error response format with proper HTTP status codes. Implement request/response DTOs for API boundary. Add logging and metrics collection for all endpoints.",
+            "status": "pending",
+            "testStrategy": "API integration tests for all endpoints with valid/invalid payloads. Error handling tests for malformed requests. Validation tests for boundary conditions and edge cases."
+          },
+          {
+            "id": 3,
+            "title": "Add Redis pub/sub mechanism for configuration sync",
+            "description": "Implement Redis publisher to broadcast configuration changes to data plane instances for real-time sync",
+            "dependencies": [
+              2
+            ],
+            "details": "Create Redis client with pub/sub capabilities for configuration synchronization. Publish events when routes, services, or plugins are created/updated/deleted. Design event payload format with change type and affected entities. Implement retry logic for failed publishes and Redis connection handling. Add configuration versioning for consistency checks.",
+            "status": "pending",
+            "testStrategy": "Pub/sub integration tests verifying event delivery. Redis failover tests with connection recovery. Configuration sync tests ensuring data plane receives updates. Event ordering tests for rapid successive changes."
+          },
+          {
+            "id": 4,
+            "title": "Implement workspace-based authorization and multi-tenancy validation",
+            "description": "Add workspace isolation and authorization middleware to ensure proper multi-tenant access control",
+            "dependencies": [
+              2
+            ],
+            "details": "Create workspace authorization middleware that validates user access to workspace resources. Implement workspace extraction from JWT claims or API key metadata. Add database-level workspace filtering for all queries. Create workspace management endpoints for CRUD operations. Ensure all API operations are scoped to user's authorized workspaces with proper error responses for unauthorized access.",
+            "status": "pending",
+            "testStrategy": "Authorization tests ensuring workspace isolation between tenants. Access control tests with valid/invalid workspace IDs. Multi-tenant data isolation tests. Permission boundary tests for cross-workspace access attempts."
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Implement load balancing and service health checking",
+        "description": "Add support for multiple upstream instances with load balancing algorithms and active health monitoring",
+        "details": "Extend Service model to support multiple endpoints. Implement LoadBalancer with round-robin, least-connections, and consistent hashing algorithms. Create HealthChecker that periodically probes upstream endpoints and marks unhealthy ones. Add circuit breaker pattern using failsafe crate to prevent cascading failures. Include service discovery integration hooks.",
+        "testStrategy": "Load distribution tests verifying even request spread across upstreams. Health check tests simulating endpoint failures and recovery. Circuit breaker tests with failure threshold and recovery timing. Performance tests measuring load balancing overhead.",
+        "priority": "medium",
+        "dependencies": [
+          3,
+          6
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Extend Service model to support multiple upstream endpoints",
+            "description": "Modify the Service data structure to store multiple upstream endpoints instead of single URL, including endpoint metadata like weight, status, and health state",
+            "dependencies": [],
+            "details": "Update Service struct in models module to include Vec<Endpoint> field. Create Endpoint struct with fields: url, weight, status (active/inactive), last_health_check timestamp, and failure_count. Update database schema migration to support multiple endpoints per service. Modify service configuration loading from Redis to handle endpoint arrays.",
+            "status": "pending",
+            "testStrategy": "Unit tests for Service model serialization/deserialization with multiple endpoints. Database migration tests ensuring backward compatibility. Integration tests for service configuration loading from Redis with endpoint arrays."
+          },
+          {
+            "id": 2,
+            "title": "Implement round-robin load balancing algorithm",
+            "description": "Create round-robin load balancer that distributes requests evenly across healthy upstream endpoints in sequential order",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement LoadBalancer trait with round_robin algorithm. Create RoundRobinBalancer struct that maintains atomic counter for endpoint selection. Include logic to skip unhealthy endpoints and reset counter when reaching end of list. Add thread-safe state management using Arc<Mutex> or atomic operations for concurrent request handling.",
+            "status": "pending",
+            "testStrategy": "Unit tests verifying even distribution across endpoints. Concurrency tests with multiple threads making simultaneous requests. Tests for skipping unhealthy endpoints and proper counter reset behavior."
+          },
+          {
+            "id": 3,
+            "title": "Add least-connections and consistent hashing algorithms",
+            "description": "Implement least-connections balancer for optimal load distribution and consistent hashing for session affinity",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Create LeastConnectionsBalancer that tracks active connections per endpoint and selects the one with minimum load. Implement ConsistentHashBalancer using ring hash algorithm with virtual nodes for even distribution. Add connection tracking middleware to update connection counts. Include hash key extraction from request headers, IP, or custom attributes.",
+            "status": "pending",
+            "testStrategy": "Load distribution tests measuring connection count accuracy. Consistent hashing tests verifying session affinity and minimal disruption when endpoints change. Performance benchmarks comparing algorithm overhead."
+          },
+          {
+            "id": 4,
+            "title": "Create active health checking with periodic endpoint probes",
+            "description": "Build health checker service that periodically probes upstream endpoints and updates their status based on response codes and timeouts",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement HealthChecker service with configurable probe intervals, timeouts, and failure thresholds. Create health check tasks using tokio spawn for concurrent probing. Support HTTP GET/HEAD requests with custom paths and expected status codes. Add exponential backoff for failed endpoints and immediate retry on recovery. Update endpoint status in shared state atomically.",
+            "status": "pending",
+            "testStrategy": "Health check tests with mock upstream servers simulating failures and recovery. Timing tests verifying probe intervals and timeout behavior. Integration tests ensuring endpoint status updates propagate to load balancers correctly."
+          },
+          {
+            "id": 5,
+            "title": "Implement circuit breaker pattern using failsafe crate",
+            "description": "Add circuit breaker protection to prevent cascading failures when upstream services become unreachable or slow",
+            "dependencies": [
+              1,
+              4
+            ],
+            "details": "Integrate failsafe crate for circuit breaker implementation with configurable failure threshold, timeout period, and recovery strategy. Wrap proxy requests with circuit breaker that monitors failure rates and response times. Include three states: closed (normal), open (failing fast), and half-open (testing recovery). Add metrics collection for circuit breaker state transitions.",
+            "status": "pending",
+            "testStrategy": "Circuit breaker tests simulating endpoint failures and verifying state transitions. Recovery tests ensuring proper half-open to closed transitions. Performance tests measuring failfast response times and overhead of circuit breaker logic."
+          },
+          {
+            "id": 6,
+            "title": "Add service discovery integration hooks and configuration management",
+            "description": "Create pluggable service discovery interface for dynamic endpoint registration and configuration updates from external systems",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "details": "Design ServiceDiscovery trait for pluggable backends (Consul, etcd, Kubernetes). Implement configuration watcher that updates Service endpoints when discovery backends change. Add endpoint registration/deregistration hooks for dynamic scaling. Include configuration validation and rollback mechanisms for invalid updates. Support multiple discovery backends per service.",
+            "status": "pending",
+            "testStrategy": "Integration tests with mock service discovery backends. Configuration update tests verifying endpoint changes propagate correctly. Rollback tests ensuring system stability during invalid configuration updates. Load tests measuring discovery integration overhead."
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Build plugin system foundation with execution engine",
+        "description": "Create extensible plugin architecture supporting transformation, validation, and custom logic execution",
+        "details": "Design Plugin trait with request/response transformation methods. Implement PluginExecutor that runs plugins in priority order with error isolation. Create plugin registry for loading and configuring plugins at startup. Add built-in plugins for header transformation, request/response logging, and CORS. Support plugin configuration at global, service, and route levels.",
+        "testStrategy": "Plugin execution tests with chain of transformations. Error isolation tests ensuring plugin failures don't crash requests. Priority ordering tests with multiple plugins. Plugin configuration tests at different scopes.",
+        "priority": "medium",
+        "dependencies": [
+          4,
+          6
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Design and implement Plugin trait with request/response transformation methods",
+            "description": "Create the foundational Plugin trait that defines the interface for all plugins with methods for transforming HTTP requests and responses",
+            "dependencies": [],
+            "details": "Define Plugin trait with methods like transform_request, transform_response, and get_name. Include error handling with custom PluginError type. Add plugin metadata fields for name, version, and description. Ensure async compatibility and define clear input/output types for request/response transformation.",
+            "status": "pending",
+            "testStrategy": "Unit tests for trait implementation with mock plugins. Test request/response transformation with various HTTP methods and headers."
+          },
+          {
+            "id": 2,
+            "title": "Create PluginExecutor for priority-ordered execution with error isolation",
+            "description": "Implement the core execution engine that runs plugins in priority order while isolating errors to prevent system crashes",
+            "dependencies": [
+              1
+            ],
+            "details": "Build PluginExecutor struct that maintains plugins sorted by priority. Implement execute_chain method that runs plugins sequentially with proper error isolation using Result types. Add timeout handling for plugin execution and circuit breaker pattern for failing plugins. Include execution context passing between plugins.",
+            "status": "pending",
+            "testStrategy": "Error isolation tests ensuring plugin failures don't crash requests. Priority ordering tests with multiple plugins. Timeout and circuit breaker tests."
+          },
+          {
+            "id": 3,
+            "title": "Implement plugin registry for loading and configuration at startup",
+            "description": "Create a plugin registry system that loads, validates, and configures plugins during application initialization",
+            "dependencies": [
+              1
+            ],
+            "details": "Develop PluginRegistry struct that loads plugins from configuration and validates their implementations. Add plugin discovery mechanism and configuration validation. Implement plugin lifecycle management with proper initialization and cleanup. Support dynamic plugin configuration updates from Redis.",
+            "status": "pending",
+            "testStrategy": "Plugin loading tests with valid and invalid configurations. Registry initialization tests with missing plugins. Configuration update tests."
+          },
+          {
+            "id": 4,
+            "title": "Develop built-in plugins for header transformation, logging, and CORS",
+            "description": "Create essential built-in plugins that provide common functionality like header manipulation, request logging, and CORS handling",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Implement HeaderTransformPlugin for adding, removing, and modifying headers. Create RequestResponseLoggerPlugin with structured logging and configurable log levels. Build CorsPlugin with full CORS specification support including preflight requests. Ensure all plugins follow the Plugin trait interface.",
+            "status": "pending",
+            "testStrategy": "Individual plugin tests for header transformation, logging output verification, and CORS compliance testing with various origins and methods."
+          },
+          {
+            "id": 5,
+            "title": "Add plugin configuration support at global, service, and route levels",
+            "description": "Implement hierarchical plugin configuration system supporting global, service-scoped, and route-specific plugin settings",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "Create PluginConfig struct with hierarchy support where route configs override service configs which override global configs. Implement configuration merging logic and validation. Add database schema updates for storing plugin configurations at different levels. Include Redis synchronization for configuration updates.",
+            "status": "pending",
+            "testStrategy": "Configuration hierarchy tests verifying proper override behavior. Plugin configuration tests at different scopes. Database and Redis sync tests for config updates."
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Integrate observability with Prometheus metrics and OpenTelemetry tracing",
+        "description": "Add comprehensive monitoring with metrics collection, distributed tracing, and structured logging",
+        "details": "Implement Prometheus metrics for request count, latency histograms, error rates by route and status code. Add OpenTelemetry tracing with automatic span creation for requests, database queries, and Redis operations. Create structured logging with trace correlation IDs. Export traces to Jaeger via OTLP protocol. Include custom metrics for plugin execution time and upstream health.",
+        "testStrategy": "Metrics accuracy tests comparing collected data with actual request patterns. Tracing tests verifying span creation and propagation. Performance tests measuring observability overhead impact on request latency. Integration tests with Prometheus and Jaeger.",
+        "priority": "medium",
+        "dependencies": [
+          2,
+          3
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Prometheus metrics collection for request count, latency histograms, and error rates",
+            "description": "Set up Prometheus metrics collection with request counters, response latency histograms, and error rate tracking by route and HTTP status code",
+            "dependencies": [],
+            "details": "Create metrics module with Prometheus registry. Implement request_count counter with route and method labels, request_duration histogram with configurable buckets, and error_rate counter with status_code labels. Add metrics middleware to record all requests. Expose /metrics endpoint for Prometheus scraping. Include business metrics like active_connections and upstream_health gauges.",
+            "status": "pending",
+            "testStrategy": "Unit tests verifying metric collection accuracy. Load tests measuring metrics overhead impact on request latency. Integration tests with Prometheus server scraping. Metric label validation tests."
+          },
+          {
+            "id": 2,
+            "title": "Add OpenTelemetry tracing with span creation for requests, database queries, and Redis operations",
+            "description": "Integrate OpenTelemetry SDK with automatic span instrumentation for HTTP requests, database operations, and Redis calls",
+            "dependencies": [
+              1
+            ],
+            "details": "Add opentelemetry and tracing crates. Configure tracer provider with OTLP exporter. Implement tracing middleware for HTTP requests creating root spans. Add database query tracing with sqlx instrumentation. Include Redis operation spans with command details. Create custom spans for plugin execution. Add span attributes for route, method, status_code, and error details.",
+            "status": "pending",
+            "testStrategy": "Tracing tests verifying span creation and hierarchy. Performance tests measuring tracing overhead. Span propagation tests across async boundaries. Integration tests with trace collectors."
+          },
+          {
+            "id": 3,
+            "title": "Create structured logging with trace correlation IDs",
+            "description": "Implement structured logging using tracing crate with JSON format and automatic trace correlation ID injection",
+            "dependencies": [
+              2
+            ],
+            "details": "Configure tracing subscriber with JSON formatting. Add correlation_id field to all log entries extracted from active spans. Implement log levels configuration via environment variables. Add contextual logging for errors with stack traces. Include request/response logging with sanitized headers. Create log aggregation structure with fields: timestamp, level, message, correlation_id, span_id, and custom attributes.",
+            "status": "pending",
+            "testStrategy": "Log format validation tests ensuring JSON structure. Correlation ID propagation tests across request lifecycle. Log sampling tests under high load. Integration tests with log aggregation systems."
+          },
+          {
+            "id": 4,
+            "title": "Configure OTLP export to Jaeger and custom metrics for plugin execution times",
+            "description": "Set up OpenTelemetry Protocol export to Jaeger and implement custom metrics for monitoring plugin performance",
+            "dependencies": [
+              3
+            ],
+            "details": "Configure OTLP exporter with Jaeger endpoint from environment variables. Add retry and batching configuration for trace export. Implement plugin_execution_time histogram metric with plugin_name and execution_stage labels. Create upstream_health_check_duration metric. Add trace sampling configuration based on request volume. Include export error handling and fallback logging.",
+            "status": "pending",
+            "testStrategy": "OTLP export integration tests with Jaeger. Plugin metrics accuracy tests comparing measured vs actual execution times. Export reliability tests with network failures. Performance tests measuring observability system overhead."
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Complete React portal with route management and analytics dashboard",
+        "description": "Build full-featured web interface for gateway configuration, monitoring, and analytics visualization",
+        "details": "Implement route management UI with form validation using react-hook-form and Zod schemas. Create service configuration interface with health status indicators. Build analytics dashboard with Recharts for request volume, latency, and error rate visualization. Add real-time updates using TanStack Query with polling. Implement workspace switching and user authentication UI. Create plugin configuration wizard with JSON schema forms.",
+        "testStrategy": "E2E tests for complete route lifecycle (create, edit, delete). Component tests for form validation and error handling. Integration tests with control plane API. Accessibility tests using axe-core. Visual regression tests for dashboard components.",
+        "priority": "medium",
+        "dependencies": [
+          6,
+          9
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement route management UI with form validation",
+            "description": "Build comprehensive route creation and editing interface with react-hook-form and Zod schema validation for path, method, and service configuration",
+            "dependencies": [],
+            "details": "Create RouteForm component with fields for route path, HTTP methods, service selection, and advanced configuration. Implement Zod schemas for route validation including path pattern validation, method selection, and service ID validation. Add form state management with react-hook-form including field validation, error display, and submission handling. Create route list view with search, filtering, and pagination. Include route editing modal and delete confirmation dialogs.",
+            "status": "pending",
+            "testStrategy": "Component tests for form validation scenarios, integration tests with API endpoints, and E2E tests for complete route creation workflow"
+          },
+          {
+            "id": 2,
+            "title": "Create service configuration interface with health status",
+            "description": "Build service management UI showing upstream health status, configuration options, and service-level plugin management",
+            "dependencies": [
+              1
+            ],
+            "details": "Develop ServiceForm component for creating and editing upstream services with URL validation, health check configuration, and timeout settings. Implement health status indicators using real-time polling of service endpoints. Create service list view with health status badges, uptime metrics, and response time indicators. Add service-level plugin configuration interface. Include service deletion with cascade warning for dependent routes.",
+            "status": "pending",
+            "testStrategy": "Component tests for health status updates, integration tests for service CRUD operations, and visual tests for status indicator components"
+          },
+          {
+            "id": 3,
+            "title": "Build analytics dashboard with Recharts visualization",
+            "description": "Create comprehensive metrics dashboard displaying request volume, latency percentiles, error rates, and plugin performance using Recharts components",
+            "dependencies": [],
+            "details": "Implement dashboard layout with multiple chart components for key metrics visualization. Create LineChart for request volume over time, BarChart for error rates by route, and AreaChart for latency percentiles (p50, p95, p99). Add time range selector (1h, 24h, 7d, 30d) with automatic data aggregation. Include metric cards for total requests, average response time, and error percentage. Implement drill-down capability from charts to detailed route metrics.",
+            "status": "pending",
+            "testStrategy": "Visual regression tests for chart rendering, integration tests with analytics API endpoints, and performance tests for large dataset visualization"
+          },
+          {
+            "id": 4,
+            "title": "Add real-time updates using TanStack Query polling",
+            "description": "Implement automatic data refresh for analytics, health status, and configuration changes using TanStack Query with configurable polling intervals",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "Configure TanStack Query with polling intervals for different data types: 30s for analytics, 10s for health status, 5s for configuration changes. Implement query invalidation strategies when user makes configuration changes. Add connection status indicator and error handling for failed polling requests. Create user preference for enabling/disabling real-time updates to conserve bandwidth. Include optimistic updates for immediate UI feedback on configuration changes.",
+            "status": "pending",
+            "testStrategy": "Integration tests for polling behavior, unit tests for query invalidation logic, and E2E tests for real-time update scenarios"
+          },
+          {
+            "id": 5,
+            "title": "Implement workspace switching and plugin configuration wizard",
+            "description": "Build workspace selection interface and comprehensive plugin configuration wizard using JSON schema forms for dynamic plugin configuration",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Create workspace switcher component with dropdown selection and workspace creation modal. Implement user authentication UI with login/logout functionality and user profile management. Build plugin configuration wizard with step-by-step interface for different plugin types (auth, rate limiting, CORS, etc.). Use JSON schema forms to dynamically generate configuration UI based on plugin schema definitions. Add plugin preview mode and configuration validation before activation.",
+            "status": "pending",
+            "testStrategy": "E2E tests for workspace switching workflow, component tests for plugin configuration forms, and integration tests for user authentication flows"
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "created": "2025-11-09T14:33:59.113Z",
+      "updated": "2025-11-09T14:33:59.113Z",
+      "description": "Tasks for master context"
+    }
+  }
+}

@@ -1,0 +1,1332 @@
+<rpg-method>
+# Capsule API Gateway - Product Requirements Document
+# RPG Method: Dependency-Aware Development Plan
+
+This PRD uses the Repository Planning Graph (RPG) methodology to create a structured,
+dependency-aware implementation roadmap for the Capsule API Gateway PaaS.
+</rpg-method>
+
+---
+
+<overview>
+
+## Problem Statement
+
+Organizations deploying microservices architectures face significant challenges with API gateway solutions:
+
+1. **Performance vs Flexibility Trade-off**: Existing solutions either offer high performance (Kong, written in C/Lua) with limited extensibility, or flexibility (API Gateway frameworks) with performance penalties.
+
+2. **Complex Configuration Management**: Managing routes, services, plugins, and policies across environments is error-prone and lacks version control integration.
+
+3. **Limited Multi-tenancy**: Most open-source gateways don't provide native workspace isolation, forcing teams to deploy multiple instances.
+
+4. **Poor Developer Experience**: Configuration is typically done via YAML files or CLI commands, lacking a modern UI and real-time visibility into gateway performance.
+
+5. **Plugin Ecosystem Lock-in**: Custom plugins are often tied to specific platforms (Kong plugins, AWS Lambda, etc.) making migration difficult.
+
+## Target Users
+
+**Primary Personas**:
+
+1. **Platform Engineers** - Deploy and manage API gateways across environments, need reliability and observability
+2. **Backend Developers** - Configure routes and services, need fast iteration and testing capabilities
+3. **DevOps Teams** - Integrate gateway with CI/CD pipelines, need automation and GitOps support
+4. **SREs** - Monitor gateway performance, troubleshoot issues, need detailed metrics and tracing
+
+**User Workflows**:
+- Define upstream services and health checks
+- Create routes with path matching and HTTP method filters
+- Apply authentication, rate limiting, and transformation plugins
+- Monitor request volumes, latencies, and error rates
+- Test route configurations before production deployment
+
+## Success Metrics
+
+**Performance Goals**:
+- Data plane request latency: p99 < 10ms (excluding upstream)
+- Support 100K+ requests/second per node
+- Route configuration updates propagate in < 5 seconds
+
+**Usability Goals**:
+- Route creation via UI: < 2 minutes for basic setup
+- Zero-downtime configuration updates: 100% success rate
+- Plugin marketplace: 20+ community plugins within 6 months
+
+**Reliability Goals**:
+- Gateway uptime: 99.99% SLA
+- Configuration sync failures: < 0.1% rate
+- Automatic failover to database if Redis unavailable
+
+</overview>
+
+---
+
+<functional-decomposition>
+
+## Capability Tree
+
+### Capability: Request Routing & Proxying
+High-performance request handling and forwarding to upstream services.
+
+#### Feature: Route Matching
+- **Description**: Match incoming requests to configured routes based on path, method, and headers
+- **Inputs**: HTTP request (path, method, headers), route configuration cache
+- **Outputs**: Matched Route object or 404 error
+- **Behavior**: Use trie-based data structure for O(log n) path matching; support wildcards, regex patterns, and path parameters
+
+#### Feature: Request Proxying
+- **Description**: Forward matched requests to upstream services with connection pooling
+- **Inputs**: HTTP request, Service configuration (host, port, protocol)
+- **Outputs**: HTTP response from upstream or timeout error
+- **Behavior**: Maintain connection pool per upstream; handle HTTP/HTTPS/HTTP2; preserve headers; apply timeout controls
+
+#### Feature: Load Balancing
+- **Description**: Distribute requests across multiple upstream instances
+- **Inputs**: Service configuration with multiple endpoints, load balancing strategy
+- **Outputs**: Selected upstream endpoint
+- **Behavior**: Support round-robin, least-connections, consistent hashing; track endpoint health
+
+#### Feature: Circuit Breaking
+- **Description**: Prevent cascading failures by stopping requests to unhealthy upstreams
+- **Inputs**: Upstream response codes, timeout events, circuit breaker config
+- **Outputs**: Circuit state (open/closed/half-open), bypass decision
+- **Behavior**: Track failure rate; open circuit after threshold; attempt periodic recovery
+
+### Capability: Authentication & Authorization
+Verify client identity and enforce access policies.
+
+#### Feature: JWT Validation
+- **Description**: Validate JSON Web Tokens in Authorization headers
+- **Inputs**: JWT token, public key/secret, validation rules
+- **Outputs**: Decoded claims or validation error
+- **Behavior**: Verify signature, expiration, issuer; extract claims for downstream use
+
+#### Feature: API Key Authentication
+- **Description**: Validate API keys against database or cache
+- **Inputs**: API key from header/query param, key storage
+- **Outputs**: Associated workspace/user or authentication error
+- **Behavior**: Check Redis cache first, fallback to database; track key usage; enforce rate limits per key
+
+#### Feature: OAuth2 Integration
+- **Description**: Integrate with OAuth2 providers for token validation
+- **Inputs**: Access token, OAuth2 provider config
+- **Outputs**: Token validation result, user info
+- **Behavior**: Validate token with provider introspection endpoint; cache valid tokens; handle token refresh
+
+### Capability: Rate Limiting & Quotas
+Prevent abuse and ensure fair resource allocation.
+
+#### Feature: Token Bucket Rate Limiting
+- **Description**: Enforce request rate limits using token bucket algorithm
+- **Inputs**: Client identifier (IP, API key, user ID), rate limit policy
+- **Outputs**: Allow/deny decision, retry-after header value
+- **Behavior**: Store token state in Redis; support per-second, per-minute, per-hour windows; distributed counting
+
+#### Feature: Quota Management
+- **Description**: Track and enforce request quotas over longer time periods
+- **Inputs**: Client identifier, quota policy (daily/monthly limits)
+- **Outputs**: Remaining quota, quota exceeded error
+- **Behavior**: Persist quota usage in database; reset on schedule; send warnings at threshold
+
+### Capability: Request/Response Transformation
+Modify requests and responses in flight.
+
+#### Feature: Header Manipulation
+- **Description**: Add, modify, or remove headers
+- **Inputs**: HTTP headers, transformation rules
+- **Outputs**: Modified header map
+- **Behavior**: Apply rules in order; support templating with request context; preserve critical headers
+
+#### Feature: Body Transformation
+- **Description**: Transform request/response bodies (JSON, XML)
+- **Inputs**: Request/response body, transformation template
+- **Outputs**: Transformed body
+- **Behavior**: Parse JSON/XML; apply JSONPath/XPath transformations; handle transformation errors gracefully
+
+#### Feature: Response Caching
+- **Description**: Cache upstream responses to reduce load
+- **Inputs**: Response, cache policy (TTL, invalidation rules)
+- **Outputs**: Cached response or cache miss
+- **Behavior**: Store in Redis with TTL; support cache key customization; respect cache control headers
+
+### Capability: Plugin System
+Extensible middleware framework for custom logic.
+
+#### Feature: Plugin Registry
+- **Description**: Manage available plugins and their configurations
+- **Inputs**: Plugin metadata, WASM binary, configuration schema
+- **Outputs**: Registered plugin handle
+- **Behavior**: Load plugins at startup; validate configurations; maintain plugin dependency graph
+
+#### Feature: Plugin Execution Engine
+- **Description**: Execute plugins in priority order during request lifecycle
+- **Inputs**: HTTP request/response, plugin chain, execution phase
+- **Outputs**: Modified request/response, execution errors
+- **Behavior**: Execute in priority order; isolate plugin failures; pass context between plugins; measure plugin latency
+
+#### Feature: WASM Plugin Runtime
+- **Description**: Execute user-provided WASM plugins safely
+- **Inputs**: WASM binary, plugin configuration, request context
+- **Outputs**: Plugin execution result
+- **Behavior**: Sandboxed execution with Wasmtime; enforce resource limits; provide host functions for logging, storage
+
+### Capability: Configuration Management
+Manage routes, services, and plugins through API and UI.
+
+#### Feature: Route CRUD Operations
+- **Description**: Create, read, update, delete route configurations
+- **Inputs**: Route definition (path, methods, service_id, plugins)
+- **Outputs**: Route object, validation errors
+- **Behavior**: Validate route syntax; check for conflicts; update database; publish to Redis; track changes
+
+#### Feature: Service Management
+- **Description**: Manage upstream service definitions
+- **Inputs**: Service definition (host, port, protocol, timeouts)
+- **Outputs**: Service object, health check status
+- **Behavior**: Validate connectivity; configure health checks; manage service versions; track active routes
+
+#### Feature: Plugin Configuration
+- **Description**: Configure plugins at global, service, or route level
+- **Inputs**: Plugin type, configuration object, scope (global/service/route)
+- **Outputs**: Plugin configuration, validation result
+- **Behavior**: Validate against plugin schema; resolve configuration conflicts; apply precedence rules
+
+#### Feature: Workspace Isolation
+- **Description**: Isolate configurations by workspace for multi-tenancy
+- **Inputs**: Workspace identifier, user credentials
+- **Outputs**: Workspace-scoped configuration view
+- **Behavior**: Enforce workspace boundaries; validate ownership; support cross-workspace sharing with permissions
+
+### Capability: Observability & Monitoring
+Provide visibility into gateway performance and behavior.
+
+#### Feature: Request Metrics Collection
+- **Description**: Collect and expose Prometheus metrics
+- **Inputs**: Request metadata (route, status, latency, size)
+- **Outputs**: Prometheus metrics (counters, histograms, gauges)
+- **Behavior**: Track requests per route; measure latency percentiles; count errors by type; minimize overhead
+
+#### Feature: Distributed Tracing
+- **Description**: Generate and propagate trace spans
+- **Inputs**: Request headers (trace context), span configuration
+- **Outputs**: OTLP trace spans to Jaeger/Tempo
+- **Behavior**: Create root span per request; add plugin execution spans; propagate trace context to upstream; sample based on config
+
+#### Feature: Structured Logging
+- **Description**: Emit JSON-formatted logs for request lifecycle
+- **Inputs**: Log level, request context, log message
+- **Outputs**: JSON log lines to stdout
+- **Behavior**: Include trace ID, route ID, client IP; support log sampling; avoid PII in logs
+
+#### Feature: Analytics Dashboard
+- **Description**: Real-time analytics on request patterns
+- **Inputs**: Aggregated metrics from time-series database
+- **Outputs**: Charts, tables, trend analysis
+- **Behavior**: Show request volume over time; latency heatmaps; error rates by route; top clients by traffic
+
+### Capability: Admin Portal
+Web-based UI for gateway management.
+
+#### Feature: Dashboard Overview
+- **Description**: Display key metrics and system health
+- **Inputs**: Real-time metrics, system status
+- **Outputs**: Dashboard with charts and stats
+- **Behavior**: Auto-refresh every 5 seconds; show request rate, error rate, p99 latency; recent activity feed
+
+#### Feature: Route Management UI
+- **Description**: Visual interface for creating and editing routes
+- **Inputs**: User interactions, form data
+- **Outputs**: Route configurations, validation feedback
+- **Behavior**: Form-based route creation; live path validation; plugin configuration wizard; route testing tool
+
+#### Feature: Service Health Monitoring
+- **Description**: Display upstream service health status
+- **Inputs**: Health check results, service metadata
+- **Outputs**: Service status dashboard
+- **Behavior**: Color-coded health indicators; historical uptime; alert on unhealthy services; manual health override
+
+#### Feature: Plugin Marketplace
+- **Description**: Browse and install community plugins
+- **Inputs**: Plugin registry API, search query
+- **Outputs**: Plugin list with metadata, installation status
+- **Behavior**: Search by category; view plugin documentation; one-click installation; version management
+
+</functional-decomposition>
+
+---
+
+<structural-decomposition>
+
+## Repository Structure
+
+```
+usecapsule-api-gateway/
+├── data-plane/                    # Rust - High-performance data plane
+│   ├── src/
+│   │   ├── main.rs               # Entry point, Axum server setup
+│   │   ├── config.rs             # Configuration loading
+│   │   ├── handlers/             # Request handlers
+│   │   │   ├── health.rs         # Health check endpoint
+│   │   │   ├── metrics.rs        # Prometheus metrics
+│   │   │   └── proxy.rs          # Main proxy handler
+│   │   ├── routing/              # Route matching engine
+│   │   │   ├── matcher.rs        # Trie-based route matching
+│   │   │   ├── cache.rs          # Route cache (Redis)
+│   │   │   └── loader.rs         # Configuration sync
+│   │   ├── middleware/           # Middleware implementations
+│   │   │   ├── auth.rs           # Authentication (JWT, API key)
+│   │   │   ├── rate_limit.rs     # Rate limiting
+│   │   │   ├── cors.rs           # CORS handling
+│   │   │   └── circuit_breaker.rs # Circuit breaker
+│   │   ├── proxy/                # Upstream proxying
+│   │   │   ├── client.rs         # HTTP client with pooling
+│   │   │   ├── load_balancer.rs  # Load balancing strategies
+│   │   │   └── health_check.rs   # Active health checking
+│   │   ├── plugins/              # Plugin system
+│   │   │   ├── registry.rs       # Plugin registry
+│   │   │   ├── executor.rs       # Plugin execution engine
+│   │   │   └── wasm_runtime.rs   # WASM runtime (optional)
+│   │   ├── transform/            # Request/response transformation
+│   │   │   ├── headers.rs        # Header manipulation
+│   │   │   └── body.rs           # Body transformation
+│   │   ├── observability/        # Metrics and tracing
+│   │   │   ├── metrics.rs        # Prometheus metrics
+│   │   │   ├── tracing.rs        # OpenTelemetry setup
+│   │   │   └── logging.rs        # Structured logging
+│   │   └── models/               # Data models
+│   │       ├── route.rs          # Route model
+│   │       ├── service.rs        # Service model
+│   │       └── plugin.rs         # Plugin model
+│   ├── Cargo.toml
+│   └── tests/                    # Integration tests
+│
+├── control-plane/                 # Go - Control plane API
+│   ├── cmd/
+│   │   └── server/
+│   │       └── main.go           # Entry point
+│   ├── internal/
+│   │   ├── api/                  # HTTP handlers
+│   │   │   ├── routes.go         # Routes API
+│   │   │   ├── services.go       # Services API
+│   │   │   ├── plugins.go        # Plugins API
+│   │   │   ├── workspaces.go     # Workspaces API
+│   │   │   └── analytics.go      # Analytics API
+│   │   ├── db/                   # Database layer
+│   │   │   ├── postgres.go       # PostgreSQL client
+│   │   │   ├── queries.go        # SQL queries
+│   │   │   └── migrations.go     # Migration runner
+│   │   ├── cache/                # Caching layer
+│   │   │   ├── redis.go          # Redis client
+│   │   │   └── sync.go           # Config sync to data plane
+│   │   ├── models/               # Data models
+│   │   │   ├── route.go          # Route model
+│   │   │   ├── service.go        # Service model
+│   │   │   ├── plugin.go         # Plugin model
+│   │   │   └── workspace.go      # Workspace model
+│   │   ├── services/             # Business logic
+│   │   │   ├── route_service.go  # Route operations
+│   │   │   ├── plugin_service.go # Plugin operations
+│   │   │   └── analytics.go      # Analytics aggregation
+│   │   ├── middleware/           # HTTP middleware
+│   │   │   ├── auth.go           # JWT authentication
+│   │   │   ├── workspace.go      # Workspace context
+│   │   │   └── logging.go        # Request logging
+│   │   └── validation/           # Input validation
+│   │       └── validators.go     # Validation rules
+│   ├── migrations/               # SQL migrations
+│   ├── go.mod
+│   └── Makefile
+│
+├── portal/                        # React + Vite - Admin UI
+│   ├── src/
+│   │   ├── main.tsx              # Entry point
+│   │   ├── App.tsx               # Root component
+│   │   ├── components/           # Reusable components
+│   │   │   ├── Layout.tsx        # Main layout
+│   │   │   ├── RouteForm.tsx     # Route creation form
+│   │   │   ├── ServiceCard.tsx   # Service display
+│   │   │   ├── PluginConfig.tsx  # Plugin configuration
+│   │   │   └── MetricsChart.tsx  # Charts for metrics
+│   │   ├── pages/                # Page components
+│   │   │   ├── Dashboard.tsx     # Overview dashboard
+│   │   │   ├── Routes.tsx        # Routes management
+│   │   │   ├── Services.tsx      # Services management
+│   │   │   ├── Plugins.tsx       # Plugin marketplace
+│   │   │   └── Analytics.tsx     # Analytics dashboard
+│   │   ├── api/                  # API client
+│   │   │   ├── client.ts         # Axios instance
+│   │   │   ├── routes.ts         # Routes API calls
+│   │   │   ├── services.ts       # Services API calls
+│   │   │   └── analytics.ts      # Analytics API calls
+│   │   ├── hooks/                # Custom hooks
+│   │   │   ├── useRoutes.ts      # Routes data hook
+│   │   │   ├── useServices.ts    # Services data hook
+│   │   │   └── useAnalytics.ts   # Analytics data hook
+│   │   ├── stores/               # Zustand stores
+│   │   │   ├── workspace.ts      # Workspace state
+│   │   │   └── ui.ts             # UI state
+│   │   ├── types/                # TypeScript types
+│   │   │   └── index.ts          # Shared types
+│   │   └── lib/                  # Utilities
+│   │       └── utils.ts          # Helper functions
+│   ├── package.json
+│   └── vite.config.ts
+│
+├── shared/                        # Shared code
+│   └── schemas/                  # Data schemas
+│       ├── route.proto           # Route protobuf
+│       └── service.proto         # Service protobuf
+│
+├── deployment/                    # Deployment configs
+│   ├── kubernetes/               # K8s manifests
+│   ├── helm/                     # Helm charts
+│   └── terraform/                # Infrastructure as code
+│
+├── docker-compose.yml            # Local development
+├── CLAUDE.md                     # AI development guide
+└── README.md                     # Project documentation
+```
+
+## Module Definitions
+
+### Module: Request Routing (data-plane/src/routing/)
+- **Maps to capability**: Request Routing & Proxying
+- **Responsibility**: Match incoming requests to configured routes with minimal latency
+- **File structure**:
+  ```
+  routing/
+  ├── matcher.rs        # Trie-based route matching
+  ├── cache.rs          # Route cache from Redis
+  ├── loader.rs         # Config sync from control plane
+  └── mod.rs            # Module exports
+  ```
+- **Exports**:
+  - `RouteMatcher::new()` - Create matcher from configuration
+  - `RouteMatcher::match_request()` - Find route for request
+  - `RouteCache::sync()` - Sync routes from Redis
+
+### Module: Proxy Client (data-plane/src/proxy/)
+- **Maps to capability**: Request Routing & Proxying
+- **Responsibility**: Forward requests to upstream services efficiently
+- **File structure**:
+  ```
+  proxy/
+  ├── client.rs         # HTTP client with connection pooling
+  ├── load_balancer.rs  # Load balancing algorithms
+  ├── health_check.rs   # Active health checking
+  └── mod.rs
+  ```
+- **Exports**:
+  - `ProxyClient::forward()` - Forward request to upstream
+  - `LoadBalancer::select_endpoint()` - Choose upstream instance
+  - `HealthChecker::check()` - Verify upstream health
+
+### Module: Middleware (data-plane/src/middleware/)
+- **Maps to capability**: Authentication & Authorization, Rate Limiting
+- **Responsibility**: Execute authentication, authorization, and rate limiting checks
+- **File structure**:
+  ```
+  middleware/
+  ├── auth.rs           # JWT and API key validation
+  ├── rate_limit.rs     # Token bucket rate limiting
+  ├── cors.rs           # CORS handling
+  ├── circuit_breaker.rs # Circuit breaker pattern
+  └── mod.rs
+  ```
+- **Exports**:
+  - `AuthMiddleware::verify_jwt()` - Validate JWT tokens
+  - `RateLimiter::check_limit()` - Enforce rate limits
+  - `CircuitBreaker::allow_request()` - Check circuit state
+
+### Module: Plugin System (data-plane/src/plugins/)
+- **Maps to capability**: Plugin System
+- **Responsibility**: Load, configure, and execute plugins
+- **File structure**:
+  ```
+  plugins/
+  ├── registry.rs       # Plugin registry
+  ├── executor.rs       # Execute plugin chain
+  ├── wasm_runtime.rs   # WASM execution (optional)
+  └── mod.rs
+  ```
+- **Exports**:
+  - `PluginRegistry::load()` - Load plugins from config
+  - `PluginExecutor::execute()` - Run plugin chain
+  - `WasmRuntime::run()` - Execute WASM plugin
+
+### Module: Control Plane API (control-plane/internal/api/)
+- **Maps to capability**: Configuration Management
+- **Responsibility**: Expose REST API for gateway configuration
+- **File structure**:
+  ```
+  api/
+  ├── routes.go         # Routes CRUD endpoints
+  ├── services.go       # Services CRUD endpoints
+  ├── plugins.go        # Plugins CRUD endpoints
+  ├── workspaces.go     # Workspaces API
+  └── analytics.go      # Analytics endpoints
+  ```
+- **Exports**:
+  - HTTP handlers for each endpoint
+  - Request/response validation
+
+### Module: Database Layer (control-plane/internal/db/)
+- **Maps to capability**: Configuration Management
+- **Responsibility**: Persist and retrieve gateway configuration
+- **File structure**:
+  ```
+  db/
+  ├── postgres.go       # Database connection
+  ├── queries.go        # SQL queries
+  └── migrations.go     # Migration runner
+  ```
+- **Exports**:
+  - `DB.GetRoute()` - Retrieve route by ID
+  - `DB.CreateRoute()` - Persist new route
+  - `DB.ListRoutes()` - Query routes with filters
+
+### Module: Cache Sync (control-plane/internal/cache/)
+- **Maps to capability**: Configuration Management
+- **Responsibility**: Publish configuration changes to data plane via Redis
+- **File structure**:
+  ```
+  cache/
+  ├── redis.go          # Redis client
+  └── sync.go           # Pub/sub sync logic
+  ```
+- **Exports**:
+  - `ConfigSync.Publish()` - Publish config update
+  - `ConfigSync.Subscribe()` - Listen for updates
+
+### Module: Portal UI (portal/src/pages/)
+- **Maps to capability**: Admin Portal
+- **Responsibility**: Provide web interface for gateway management
+- **File structure**:
+  ```
+  pages/
+  ├── Dashboard.tsx     # Overview dashboard
+  ├── Routes.tsx        # Route management
+  ├── Services.tsx      # Service management
+  ├── Plugins.tsx       # Plugin marketplace
+  └── Analytics.tsx     # Analytics dashboard
+  ```
+- **Exports**:
+  - React components for each page
+
+</structural-decomposition>
+
+---
+
+<dependency-graph>
+
+## Dependency Chain
+
+### Foundation Layer (Phase 0)
+No dependencies - these provide core building blocks.
+
+- **data-plane/config**: Configuration loading from environment
+- **data-plane/models**: Data structure definitions (Route, Service, Plugin)
+- **data-plane/observability/logging**: Structured logging setup
+- **control-plane/models**: Go data models
+- **control-plane/db**: Database connection and query builders
+- **control-plane/cache/redis**: Redis client setup
+
+### Data Access Layer (Phase 1)
+- **data-plane/routing/cache**: Depends on [config, models, cache/redis]
+- **data-plane/routing/loader**: Depends on [routing/cache, models]
+- **control-plane/db/queries**: Depends on [db, models]
+- **control-plane/cache/sync**: Depends on [cache/redis, models]
+
+### Core Business Logic Layer (Phase 2)
+- **data-plane/routing/matcher**: Depends on [models, routing/cache]
+- **data-plane/middleware/auth**: Depends on [models, config, routing/cache]
+- **data-plane/middleware/rate_limit**: Depends on [models, cache/redis]
+- **data-plane/middleware/circuit_breaker**: Depends on [models]
+- **control-plane/services/route_service**: Depends on [db/queries, cache/sync, models]
+- **control-plane/services/plugin_service**: Depends on [db/queries, cache/sync, models]
+- **control-plane/validation**: Depends on [models]
+
+### Request Processing Layer (Phase 3)
+- **data-plane/proxy/client**: Depends on [config, models, observability]
+- **data-plane/proxy/load_balancer**: Depends on [proxy/client, models]
+- **data-plane/proxy/health_check**: Depends on [proxy/client, models, cache/redis]
+- **data-plane/transform/headers**: Depends on [models]
+- **data-plane/transform/body**: Depends on [models]
+- **data-plane/plugins/registry**: Depends on [models, config]
+- **data-plane/plugins/executor**: Depends on [plugins/registry, models]
+
+### HTTP Layer (Phase 4)
+- **data-plane/handlers/proxy**: Depends on [routing/matcher, middleware/*, proxy/*, plugins/executor, transform/*]
+- **data-plane/handlers/health**: Depends on [config]
+- **data-plane/handlers/metrics**: Depends on [observability/metrics]
+- **control-plane/api/routes**: Depends on [services/route_service, validation, middleware/auth]
+- **control-plane/api/services**: Depends on [services/*, validation, middleware/auth]
+- **control-plane/api/plugins**: Depends on [services/plugin_service, validation, middleware/auth]
+- **control-plane/api/analytics**: Depends on [services/analytics, middleware/auth]
+
+### Presentation Layer (Phase 5)
+- **portal/api**: Depends on [control-plane API endpoints being available]
+- **portal/hooks**: Depends on [api, types]
+- **portal/components**: Depends on [types, hooks]
+- **portal/pages**: Depends on [components, hooks, stores]
+
+### Advanced Features Layer (Phase 6)
+- **data-plane/plugins/wasm_runtime**: Depends on [plugins/registry, config]
+- **data-plane/observability/tracing**: Depends on [config, handlers/*]
+- **portal/stores/workspace**: Depends on [api]
+- **control-plane/services/analytics**: Depends on [db/queries, models]
+
+</dependency-graph>
+
+---
+
+<implementation-roadmap>
+
+## Development Phases
+
+### Phase 0: Foundation & Infrastructure
+**Goal**: Establish core infrastructure for all three components
+
+**Entry Criteria**: Clean repository, development tools installed
+
+**Tasks**:
+- [ ] Setup data plane configuration system (depends on: none)
+  - Acceptance criteria: Load config from .env file successfully
+  - Test strategy: Unit tests for config parsing, validation
+
+- [ ] Define shared data models in Rust (depends on: none)
+  - Acceptance criteria: Route, Service, Plugin structs with serialization
+  - Test strategy: Serde serialization/deserialization tests
+
+- [ ] Setup database schema and migrations (depends on: none)
+  - Acceptance criteria: PostgreSQL tables created, triggers working
+  - Test strategy: Run migrations up/down, verify schema
+
+- [ ] Initialize Redis connection pools (depends on: none)
+  - Acceptance criteria: Connect to Redis, handle reconnection
+  - Test strategy: Connection pool tests, failover scenarios
+
+- [ ] Setup structured logging (depends on: none)
+  - Acceptance criteria: JSON logs with trace IDs, configurable levels
+  - Test strategy: Log output validation, performance impact < 1%
+
+- [ ] Initialize Go control plane project (depends on: none)
+  - Acceptance criteria: Gin server starts, basic health check
+  - Test strategy: HTTP health endpoint returns 200
+
+- [ ] Setup React portal with Vite (depends on: none)
+  - Acceptance criteria: Dev server runs, hot reload works
+  - Test strategy: Manual verification of HMR
+
+**Exit Criteria**: All services start without errors, can connect to database and Redis
+
+**Delivers**: Development environment ready for feature implementation
+
+---
+
+### Phase 1: Basic Route Matching & Proxying
+**Goal**: Implement core gateway functionality - route requests to upstreams
+
+**Entry Criteria**: Phase 0 complete
+
+**Tasks**:
+- [ ] Implement route cache loader from Redis (depends on: [data-plane/config, models, redis])
+  - Acceptance criteria: Load routes from Redis, handle missing keys
+  - Test strategy: Mock Redis responses, verify cache updates
+
+- [ ] Build trie-based route matcher (depends on: [models, routing/cache])
+  - Acceptance criteria: Match routes in O(log n) time, support wildcards
+  - Test strategy: Benchmark with 1000+ routes, verify match accuracy
+
+- [ ] Create HTTP client with connection pooling (depends on: [config, models])
+  - Acceptance criteria: Reuse connections, handle timeouts
+  - Test strategy: Load test with 10k concurrent requests
+
+- [ ] Implement basic proxy handler (depends on: [routing/matcher, proxy/client])
+  - Acceptance criteria: Forward request to upstream, return response
+  - Test strategy: Integration test with mock upstream
+
+- [ ] Create control plane route CRUD API (depends on: [db/queries, models])
+  - Acceptance criteria: REST endpoints for routes, validation
+  - Test strategy: API integration tests, invalid input handling
+
+- [ ] Implement config sync to Redis (depends on: [cache/sync, models])
+  - Acceptance criteria: Publish route changes to Redis on create/update
+  - Test strategy: Verify Redis pub/sub messages
+
+**Exit Criteria**: Can create route via API, data plane forwards requests to upstream
+
+**Delivers**: Basic API gateway functionality - route and proxy requests
+
+---
+
+### Phase 2: Authentication & Rate Limiting
+**Goal**: Add security and abuse prevention
+
+**Entry Criteria**: Phase 1 complete
+
+**Tasks**:
+- [ ] Implement JWT validation middleware (depends on: [models, config, routing/cache])
+  - Acceptance criteria: Verify JWT signature, extract claims
+  - Test strategy: Valid/invalid token tests, expired tokens
+
+- [ ] Build API key authentication (depends on: [models, cache/redis])
+  - Acceptance criteria: Validate keys from Redis cache
+  - Test strategy: Cache hit/miss scenarios, key rotation
+
+- [ ] Create token bucket rate limiter (depends on: [models, cache/redis])
+  - Acceptance criteria: Enforce limits, return 429 on exceed
+  - Test strategy: Burst tests, distributed counter verification
+
+- [ ] Add authentication config to routes (depends on: [control-plane/services, models])
+  - Acceptance criteria: Attach auth plugin to routes
+  - Test strategy: API tests for auth configuration
+
+- [ ] Implement rate limit policies (depends on: [control-plane/services, models])
+  - Acceptance criteria: Define per-route, per-client limits
+  - Test strategy: Policy CRUD operations, validation
+
+**Exit Criteria**: Routes can enforce JWT auth and rate limits
+
+**Delivers**: Secure gateway with abuse prevention
+
+---
+
+### Phase 3: Service Management & Load Balancing
+**Goal**: Support multiple upstream instances with health checking
+
+**Entry Criteria**: Phase 2 complete
+
+**Tasks**:
+- [ ] Build service CRUD API (depends on: [control-plane/db/queries, models])
+  - Acceptance criteria: Manage upstream services, timeouts, retries
+  - Test strategy: Service configuration validation
+
+- [ ] Implement round-robin load balancer (depends on: [proxy/client, models])
+  - Acceptance criteria: Distribute requests evenly across endpoints
+  - Test strategy: Request distribution verification
+
+- [ ] Add active health checking (depends on: [proxy/client, cache/redis])
+  - Acceptance criteria: Periodic health checks, mark unhealthy endpoints
+  - Test strategy: Simulate endpoint failures, verify detection
+
+- [ ] Create circuit breaker middleware (depends on: [models])
+  - Acceptance criteria: Open circuit on failures, attempt recovery
+  - Test strategy: Failure threshold tests, half-open state
+
+- [ ] Sync service configs to data plane (depends on: [control-plane/cache/sync])
+  - Acceptance criteria: Data plane polls for service updates
+  - Test strategy: Config change propagation timing
+
+**Exit Criteria**: Gateway distributes load across multiple upstreams, handles failures
+
+**Delivers**: Production-ready routing with high availability
+
+---
+
+### Phase 4: Plugin System Foundation
+**Goal**: Enable extensibility through plugin architecture
+
+**Entry Criteria**: Phase 3 complete
+
+**Tasks**:
+- [ ] Design plugin registry and lifecycle (depends on: [models, config])
+  - Acceptance criteria: Load plugins at startup, validate configs
+  - Test strategy: Plugin loading tests, invalid config handling
+
+- [ ] Build plugin execution engine (depends on: [plugins/registry, models])
+  - Acceptance criteria: Execute plugins in priority order
+  - Test strategy: Plugin chain execution, error isolation
+
+- [ ] Create plugin API in control plane (depends on: [control-plane/services, models])
+  - Acceptance criteria: Configure plugins at global/service/route level
+  - Test strategy: Plugin CRUD, precedence rules
+
+- [ ] Implement header transformation plugin (depends on: [plugins/executor, models])
+  - Acceptance criteria: Add/remove/modify headers via config
+  - Test strategy: Header manipulation tests
+
+- [ ] Add plugin configuration UI (depends on: [portal/components, api])
+  - Acceptance criteria: Visual plugin configuration forms
+  - Test strategy: Manual UI testing
+
+**Exit Criteria**: Can configure and execute transformation plugins
+
+**Delivers**: Extensible gateway with built-in transformation capabilities
+
+---
+
+### Phase 5: Observability & Monitoring
+**Goal**: Provide visibility into gateway performance
+
+**Entry Criteria**: Phase 4 complete
+
+**Tasks**:
+- [ ] Implement Prometheus metrics (depends on: [observability/*, handlers/*])
+  - Acceptance criteria: Expose request count, latency, error rate
+  - Test strategy: Verify metric accuracy, cardinality limits
+
+- [ ] Setup OpenTelemetry tracing (depends on: [config, handlers/*])
+  - Acceptance criteria: Generate traces, propagate context
+  - Test strategy: Verify spans in Jaeger, sampling works
+
+- [ ] Create analytics aggregation service (depends on: [control-plane/db, models])
+  - Acceptance criteria: Aggregate request metrics by route, time
+  - Test strategy: Query performance with large datasets
+
+- [ ] Build analytics API endpoints (depends on: [services/analytics])
+  - Acceptance criteria: Return time-series data for charts
+  - Test strategy: API response format, date range filtering
+
+- [ ] Implement analytics dashboard UI (depends on: [portal/components, api])
+  - Acceptance criteria: Display request volume, latency charts
+  - Test strategy: Manual verification with live data
+
+**Exit Criteria**: Real-time visibility into gateway metrics via UI
+
+**Delivers**: Production observability for SRE teams
+
+---
+
+### Phase 6: Admin Portal & User Experience
+**Goal**: Complete web UI for gateway management
+
+**Entry Criteria**: Phase 5 complete
+
+**Tasks**:
+- [ ] Build route management UI (depends on: [portal/components, hooks, api])
+  - Acceptance criteria: Create/edit/delete routes via forms
+  - Test strategy: E2E tests for route lifecycle
+
+- [ ] Create service management UI (depends on: [portal/components, hooks, api])
+  - Acceptance criteria: Configure services, view health status
+  - Test strategy: UI integration tests
+
+- [ ] Implement dashboard overview (depends on: [portal/components, hooks])
+  - Acceptance criteria: Display key metrics, recent activity
+  - Test strategy: Manual testing with mock data
+
+- [ ] Add workspace management (depends on: [control-plane/api, portal])
+  - Acceptance criteria: Switch workspaces, isolate configs
+  - Test strategy: Multi-workspace scenarios
+
+- [ ] Build route testing tool (depends on: [portal/components, api])
+  - Acceptance criteria: Test routes before deployment
+  - Test strategy: Mock request/response validation
+
+**Exit Criteria**: Full-featured admin UI for gateway management
+
+**Delivers**: Complete PaaS experience for users
+
+---
+
+### Phase 7: Advanced Features (Optional)
+**Goal**: Implement WASM plugins and advanced capabilities
+
+**Entry Criteria**: Phase 6 complete
+
+**Tasks**:
+- [ ] Integrate Wasmtime runtime (depends on: [plugins/registry, config])
+  - Acceptance criteria: Execute WASM plugins safely
+  - Test strategy: Resource limit enforcement, sandboxing
+
+- [ ] Create plugin SDK and examples (depends on: [plugins/wasm_runtime])
+  - Acceptance criteria: Developer can build custom plugin
+  - Test strategy: Sample plugin execution
+
+- [ ] Implement plugin marketplace UI (depends on: [portal/pages, api])
+  - Acceptance criteria: Browse, install, configure plugins
+  - Test strategy: Plugin installation workflow
+
+- [ ] Add OAuth2 integration (depends on: [middleware/auth])
+  - Acceptance criteria: Support OAuth2 token validation
+  - Test strategy: Integration with real OAuth providers
+
+- [ ] Build GitOps integration (depends on: [control-plane/api])
+  - Acceptance criteria: Import configs from Git repository
+  - Test strategy: Sync from mock Git server
+
+**Exit Criteria**: Gateway supports custom WASM plugins and advanced auth
+
+**Delivers**: Differentiated PaaS with unique extensibility
+
+</implementation-roadmap>
+
+---
+
+<test-strategy>
+
+## Test Pyramid
+
+```
+        /\
+       /E2E\       ← 10% (End-to-end, slow, comprehensive)
+      /------\
+     /Integration\ ← 30% (Module interactions)
+    /------------\
+   /  Unit Tests  \ ← 60% (Fast, isolated, deterministic)
+  /----------------\
+```
+
+## Coverage Requirements
+- Line coverage: 80% minimum
+- Branch coverage: 75% minimum
+- Function coverage: 90% minimum
+- Critical path coverage: 100% (route matching, proxying, auth)
+
+## Critical Test Scenarios
+
+### Route Matching Module
+**Happy path**:
+- Exact path match returns correct route
+- Wildcard patterns match multiple paths
+- Path parameters extracted correctly
+- Expected: Route object with matched params
+
+**Edge cases**:
+- Empty path matches root route
+- Trailing slashes handled consistently
+- Case sensitivity respected
+- Expected: Deterministic matching behavior
+
+**Error cases**:
+- No matching route returns 404
+- Malformed paths rejected
+- Expected: Proper error responses, no panics
+
+**Integration points**:
+- Route cache updated when control plane publishes changes
+- Expected: < 5 second propagation time
+
+### Authentication Middleware
+**Happy path**:
+- Valid JWT passes authentication
+- API key in cache validates quickly
+- Expected: Request proceeds with user context
+
+**Edge cases**:
+- Expired JWT rejected with 401
+- Missing Authorization header handled
+- Case-insensitive header lookup
+- Expected: Clear error messages
+
+**Error cases**:
+- Invalid JWT signature rejected
+- Malformed tokens return 400
+- Cache miss falls back to database
+- Expected: Security without false positives
+
+**Integration points**:
+- JWT validation integrated with route handler
+- API key cache synchronized with database
+- Expected: Auth checks < 5ms p99 latency
+
+### Rate Limiting
+**Happy path**:
+- Requests within limit allowed
+- Token bucket refills correctly
+- Expected: Smooth request flow
+
+**Edge cases**:
+- Burst requests consume tokens
+- Limit reset at configured interval
+- Different limits per route respected
+- Expected: Fair rate enforcement
+
+**Error cases**:
+- Exceeded limit returns 429 with Retry-After
+- Redis unavailable falls back to memory
+- Negative limits rejected
+- Expected: Graceful degradation
+
+**Integration points**:
+- Rate limits synchronized across data plane instances
+- Control plane updates limits without restart
+- Expected: Distributed rate limiting accuracy > 95%
+
+### Proxy Client
+**Happy path**:
+- Request forwarded to upstream successfully
+- Response returned with correct status/headers
+- Expected: Low latency proxying
+
+**Edge cases**:
+- Large request bodies streamed
+- Long-lived connections maintained
+- HTTP/2 requests handled
+- Expected: Protocol compliance
+
+**Error cases**:
+- Upstream timeout returns 504
+- Connection refused returns 502
+- Invalid upstream response handled
+- Expected: Clear error responses, no crashes
+
+**Integration points**:
+- Circuit breaker opens on repeated failures
+- Health checker marks unhealthy upstreams
+- Expected: Fault isolation, automatic recovery
+
+### Control Plane API
+**Happy path**:
+- Create route with valid config
+- Update route preserves workspace isolation
+- Expected: REST semantics, idempotent operations
+
+**Edge cases**:
+- Duplicate route path returns conflict
+- Partial updates (PATCH) work correctly
+- Pagination for list endpoints
+- Expected: API best practices followed
+
+**Error cases**:
+- Invalid JSON returns 400 with details
+- Unauthorized access returns 401
+- Not found returns 404
+- Expected: Proper HTTP status codes
+
+**Integration points**:
+- Route creation triggers Redis publish
+- Database transaction ensures consistency
+- Expected: Config sync within 5 seconds
+
+## Test Generation Guidelines
+
+For **data plane (Rust)**:
+- Use `mockito` for HTTP mocking in integration tests
+- Use `criterion` for performance benchmarks
+- Test error paths explicitly - use `Result` types
+- Verify no panics in production code paths
+- Mock Redis with `redis-test` crate
+- Benchmark hot paths (route matching, proxying)
+
+For **control plane (Go)**:
+- Use `testify` for assertions and mocking
+- Use `httptest` for HTTP handler testing
+- Test database operations with transactions
+- Verify workspace isolation in all queries
+- Mock external dependencies (Redis, database)
+- Test concurrent access scenarios
+
+For **portal (React)**:
+- Use `vitest` for component testing
+- Use `@testing-library/react` for user interactions
+- Test form validation and error states
+- Verify API error handling in components
+- Mock API responses with MSW
+- Test accessibility (a11y) with axe
+
+**TDD Workflow**:
+1. Write failing test (RED phase)
+2. Implement minimal code to pass (GREEN phase)
+3. Refactor for clarity (REFACTOR phase)
+4. Repeat for next feature
+
+**Integration Test Strategy**:
+- Use docker-compose for test infrastructure
+- Test data plane + control plane interaction
+- Verify config sync end-to-end
+- Test portal API integration
+
+</test-strategy>
+
+---
+
+<architecture>
+
+## System Components
+
+**Data Plane (Rust)**:
+- High-performance request processing
+- Async I/O with Tokio runtime
+- Connection pooling for upstreams
+- In-memory route cache with Redis sync
+- Plugin execution engine
+- Metrics collection without blocking
+
+**Control Plane (Go)**:
+- REST API for configuration management
+- PostgreSQL for persistent storage
+- Redis for cache and pub/sub
+- Background workers for analytics aggregation
+- JWT-based authentication
+- Workspace-based multi-tenancy
+
+**Portal (React + TypeScript)**:
+- Single-page application (SPA)
+- TanStack Query for server state
+- Zustand for client state
+- Real-time metrics updates
+- Form validation with React Hook Form
+- Recharts for data visualization
+
+**Infrastructure**:
+- PostgreSQL 15+ for relational data
+- Redis 7+ for caching and pub/sub
+- Prometheus for metrics storage
+- Jaeger for distributed tracing
+- Docker Compose for local dev
+
+## Data Models
+
+**Route**:
+```typescript
+{
+  id: UUID,
+  workspace_id: UUID,
+  service_id: UUID,
+  name: string,
+  path: string,              // e.g., "/api/users/:id"
+  methods: string[],         // ["GET", "POST"]
+  plugins: string[],         // Plugin IDs in execution order
+  enabled: boolean,
+  metadata: Record<string, string>,
+  created_at: timestamp,
+  updated_at: timestamp
+}
+```
+
+**Service**:
+```typescript
+{
+  id: UUID,
+  workspace_id: UUID,
+  name: string,
+  protocol: "http" | "https" | "grpc",
+  host: string,
+  port: number,
+  path: string,              // Base path
+  retries: number,
+  connect_timeout: number,   // milliseconds
+  write_timeout: number,
+  read_timeout: number,
+  enabled: boolean,
+  metadata: Record<string, string>,
+  created_at: timestamp,
+  updated_at: timestamp
+}
+```
+
+**Plugin**:
+```typescript
+{
+  id: UUID,
+  workspace_id: UUID,
+  name: string,
+  type: string,              // "auth", "rate-limit", "transform"
+  config: Record<string, any>,
+  enabled: boolean,
+  priority: number,          // Lower = higher priority
+  route_id?: UUID,           // Null for global plugins
+  service_id?: UUID,
+  global: boolean,
+  created_at: timestamp,
+  updated_at: timestamp
+}
+```
+
+**Workspace**:
+```typescript
+{
+  id: UUID,
+  name: string,
+  created_at: timestamp,
+  updated_at: timestamp
+}
+```
+
+## Technology Stack
+
+**Data Plane**:
+- Language: Rust 1.75+
+- Framework: Axum 0.7 (built on Tokio + Hyper)
+- Database: SQLx for PostgreSQL
+- Cache: redis-rs for Redis
+- Observability: tracing, opentelemetry
+- WASM Runtime: Wasmtime 17+ (optional)
+
+**Decision: Rust for Data Plane**
+- **Rationale**: Need sub-10ms latency, memory safety, zero-cost abstractions
+- **Trade-offs**: Slower development vs Python/Node, steeper learning curve
+- **Alternatives considered**: Go (good but GC pauses), C++ (unsafe), Zig (immature)
+
+**Control Plane**:
+- Language: Go 1.21+
+- Framework: Gin (HTTP router)
+- Database: sqlx + pgx (PostgreSQL driver)
+- Cache: go-redis
+- Migrations: golang-migrate
+- Logging: zap
+
+**Decision: Go for Control Plane**
+- **Rationale**: Excellent HTTP libraries, fast compilation, easy deployment
+- **Trade-offs**: Less type safety vs Rust, less ecosystem vs Node
+- **Alternatives considered**: Node.js (callback hell), Rust (overkill), Python (slow)
+
+**Portal**:
+- Language: TypeScript 5.3+
+- Framework: React 18 + Vite
+- State: TanStack Query (server), Zustand (client)
+- Styling: TailwindCSS + Radix UI
+- Charts: Recharts
+- Forms: React Hook Form + Zod
+
+**Decision: React + Vite**
+- **Rationale**: Mature ecosystem, fast HMR, TypeScript support
+- **Trade-offs**: Client-side rendering vs SSR, bundle size
+- **Alternatives considered**: Vue (smaller ecosystem), Svelte (less mature), Next.js (overkill for admin UI)
+
+**Communication Patterns**:
+- Control Plane → Data Plane: Redis pub/sub for config changes
+- Portal → Control Plane: REST API over HTTP
+- Data Plane → PostgreSQL: Read-only for config if Redis unavailable
+- All services → Prometheus: Metrics push
+- All services → Jaeger: OTLP trace export
+
+**Decision: Redis for Config Sync**
+- **Rationale**: Low latency pub/sub, built-in caching, simple operations
+- **Trade-offs**: Additional infrastructure vs direct database polling
+- **Alternatives considered**: etcd (complex), gRPC streaming (connection overhead), database polling (slow)
+
+</architecture>
+
+---
+
+<risks>
+
+## Technical Risks
+
+**Risk**: Route matching performance degrades with 10K+ routes
+- **Impact**: High - Core gateway function
+- **Likelihood**: Medium
+- **Mitigation**: Use trie-based matching, benchmark continuously, add route cache warmup
+- **Fallback**: Implement route grouping or sharding by hostname
+
+**Risk**: Redis failure causes data plane outage
+- **Impact**: High - No config sync
+- **Likelihood**: Low with proper setup
+- **Mitigation**: Fallback to PostgreSQL polling, implement local config cache with TTL
+- **Fallback**: Manual config reload endpoint, pre-loaded route snapshot
+
+**Risk**: WASM plugin execution overhead impacts latency
+- **Impact**: Medium - Optional feature
+- **Likelihood**: Medium
+- **Mitigation**: Benchmark plugin overhead, enforce execution time limits, profile hot paths
+- **Fallback**: Disable WASM feature, use native plugins only
+
+**Risk**: PostgreSQL becomes bottleneck under high write load
+- **Impact**: Medium - Control plane only
+- **Likelihood**: Low
+- **Mitigation**: Batch writes, use connection pooling, add read replicas
+- **Fallback**: Queue writes in Redis, async processing
+
+**Risk**: Data plane memory usage grows unbounded with route cache
+- **Impact**: High - Memory leaks
+- **Likelihood**: Low
+- **Mitigation**: Implement cache eviction policy, monitor memory usage, set max cache size
+- **Fallback**: Restart data plane instances on schedule
+
+## Dependency Risks
+
+**Risk**: Axum/Tokio breaking changes in future versions
+- **Impact**: Medium - Blocked upgrades
+- **Likelihood**: Low - Stable APIs
+- **Mitigation**: Pin versions, follow release notes, maintain upgrade tests
+- **Fallback**: Fork and maintain compatibility layer
+
+**Risk**: TanStack Query API changes break portal
+- **Impact**: Low - Portal only
+- **Likelihood**: Low
+- **Mitigation**: Pin major version, test upgrades in staging
+- **Fallback**: Revert to previous version, manual refactor if needed
+
+**Risk**: Redis pub/sub message ordering not guaranteed
+- **Impact**: Medium - Config sync issues
+- **Likelihood**: Medium
+- **Mitigation**: Include version numbers in messages, implement reconciliation loop
+- **Fallback**: Force full config reload on detection
+
+## Scope Risks
+
+**Risk**: WASM plugin system takes longer than estimated
+- **Impact**: Medium - Delays release
+- **Likelihood**: High - Complex integration
+- **Mitigation**: Make optional feature, release without WASM first, iterate
+- **Fallback**: Defer to Phase 7, ship native plugins only
+
+**Risk**: OAuth2 integration requires provider-specific implementations
+- **Impact**: Low - Nice-to-have feature
+- **Likelihood**: High - Many providers
+- **Mitigation**: Start with generic OIDC, add providers iteratively
+- **Fallback**: Document third-party integration, provide examples
+
+**Risk**: Analytics aggregation performance poor at scale
+- **Impact**: Medium - Slow dashboard
+- **Likelihood**: Medium
+- **Mitigation**: Use time-series database (InfluxDB/TimescaleDB), pre-aggregate data
+- **Fallback**: Reduce retention period, sample data
+
+**Risk**: Multi-tenancy leaks data between workspaces
+- **Impact**: Critical - Security issue
+- **Likelihood**: Low with careful design
+- **Mitigation**: Thorough testing, security audit, workspace_id in all queries
+- **Fallback**: Emergency workspace isolation patch, data audit
+
+</risks>
+
+---
+
+<appendix>
+
+## References
+
+**Research Papers**:
+- "Repository Planning Graph: A Paradigm for Large-Scale Code Generation" - Microsoft Research
+- "Building Secure and Reliable Systems" - Google SRE
+- "The Design and Implementation of a Log-Structured File System" - Berkeley (for understanding trie structures)
+
+**Similar Systems**:
+- Kong API Gateway (Lua-based, high performance)
+- Traefik (Go, dynamic configuration)
+- Envoy Proxy (C++, service mesh focus)
+- AWS API Gateway (managed service)
+- Tyk (Go, open-source)
+
+**Documentation**:
+- Axum documentation: https://docs.rs/axum
+- Tokio async runtime: https://tokio.rs
+- Gin web framework: https://gin-gonic.com
+- TanStack Query: https://tanstack.com/query
+- OpenTelemetry: https://opentelemetry.io
+
+## Glossary
+
+- **Data Plane**: Component that handles actual request traffic (high performance path)
+- **Control Plane**: Component that manages configuration and analytics (management path)
+- **Route**: Mapping from request pattern (path, method) to upstream service
+- **Service**: Upstream backend that handles requests (may have multiple instances)
+- **Plugin**: Middleware component that transforms requests/responses or enforces policies
+- **Workspace**: Isolation boundary for multi-tenancy
+- **Circuit Breaker**: Pattern to prevent cascading failures by stopping requests to unhealthy upstreams
+- **Trie**: Tree data structure for efficient prefix matching (used in route matching)
+- **WASM**: WebAssembly - sandboxed execution environment for plugins
+
+## Open Questions
+
+1. **Rate Limiting Accuracy**: What's acceptable accuracy for distributed rate limiting? (Answer: 95%+ accuracy acceptable, document edge cases)
+
+2. **Plugin API Design**: Should plugins be compiled into data plane or loaded dynamically? (Answer: Start with compiled, add WASM later)
+
+3. **Metrics Retention**: How long should we retain request metrics? (Answer: 30 days in database, 7 days in Prometheus)
+
+4. **Workspace Limits**: Should we enforce limits on routes/services per workspace? (Answer: Yes, start with 1000 routes, 100 services)
+
+5. **Config Sync Latency**: Is 5 seconds acceptable for config propagation? (Answer: Yes for most use cases, add manual trigger for urgent updates)
+
+6. **Authentication Default**: Should routes default to requiring auth or be open? (Answer: Default to open, explicit opt-in for security - better DX)
+
+7. **Load Balancing Default**: Which algorithm should be default? (Answer: Round-robin for simplicity, least-connections for production)
+
+8. **WASM Language Support**: Which languages to support for WASM plugins? (Answer: Rust first, then AssemblyScript, then Go)
+
+</appendix>
